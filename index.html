@@ -1321,7 +1321,7 @@
     <div class="sv-card" id="stockValueCard">
       <div class="sv-head">
         <div>
-          <div class="sv-title">💰 Стоимость склада <span class="sv-sub">по закупочным ценам (кат. A, с НДС) · видят только админ и руководитель · нажмите на цену в таблице, чтобы вписать свою</span></div>
+          <div class="sv-title">💰 Стоимость склада <span class="sv-sub">по закупочным ценам (кат. A, с НДС) · видят админ, руководитель и снабженец · нажмите на цену в таблице, чтобы вписать свою</span></div>
           <div class="sv-total" id="svTotal">—</div>
           <div class="sv-meta" id="svMeta"></div>
         </div>
@@ -1778,7 +1778,8 @@
   const seesAll = () => isWarehouse() || isDirector();
   const seesAnalytics = () => isAdmin() || isDirector();
   const isProcurement = () => !!currentUser && currentUser.roleKey === "procurement";
-  const seesAnalyticsTab = () => seesAnalytics() || isProcurement();   // вкладка «Аналитика»; закупочные цены и финансы — только seesAnalytics
+  const seesAnalyticsTab = () => seesAnalytics() || isProcurement();   // вкладка «Аналитика»
+  const seesPrices = () => seesAnalytics() || isProcurement();   // закупочные цены и стоимость склада (финансы — только seesAnalytics)
 
   function showMsg(el, text){ el.textContent = text; el.classList.add("show"); }
   function hideMsg(el){ el.textContent = ""; el.classList.remove("show"); }
@@ -4458,7 +4459,7 @@
     return {items, skipped};
   }
   async function loadStockValue(force){
-    if(!seesAnalytics() || svBusy) return;
+    if(!seesPrices() || svBusy) return;
     if(!force && Date.now() - svLoadedAt < 60000) return;
     svBusy = true; svStatus("Считаю…");
     try{
@@ -4977,7 +4978,7 @@
     document.querySelectorAll("[data-warehouse-only]").forEach(el => { el.hidden = !seesAll(); });
     document.querySelectorAll("[data-admin-only]").forEach(el => { el.hidden = !seesAnalytics(); });
     document.querySelectorAll("[data-analytics-tab]").forEach(el => { el.hidden = !seesAnalyticsTab(); });
-    document.getElementById("stockValueCard").style.display = seesAnalytics() ? "" : "none";   // закупочные цены видят только админ и руководитель
+    document.getElementById("stockValueCard").style.display = seesPrices() ? "" : "none";
     document.getElementById("newReceiptBtn").hidden = !wh;
     document.getElementById("uploadStockBtn").hidden = !canManageStock();
     let cachedData = null;

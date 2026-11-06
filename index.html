@@ -4960,7 +4960,7 @@
     document.querySelectorAll("[data-warehouse-only]").forEach(el => { el.hidden = !seesAll(); });
     document.querySelectorAll("[data-admin-only]").forEach(el => { el.hidden = !seesAnalytics(); });
     document.getElementById("newReceiptBtn").hidden = !wh;
-    document.getElementById("uploadStockBtn").hidden = !isAdmin();
+    document.getElementById("uploadStockBtn").hidden = !(isAdmin() || currentUser.roleKey === "procurement");
     let cachedData = null;
     if(!freshPayload){ try{ cachedData = JSON.parse(sessionStorage.getItem(PAYLOAD_KEY) || "null"); }catch(e){ cachedData = null; } }
     if(!freshPayload && !(cachedData && Array.isArray(cachedData.stock))) cachedData = readLast();   // новое открытие — последние данные с этого компьютера

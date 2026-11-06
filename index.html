@@ -1769,6 +1769,8 @@
   // Права склада есть у заведующего и у админа; админ дополнительно видит служебные функции.
   const isWarehouse = () => !!currentUser && (currentUser.roleKey === "warehouse" || currentUser.roleKey === "procurement" || currentUser.roleKey === "admin");
   const isAdmin = () => !!currentUser && currentUser.roleKey === "admin";
+  // Админ и снабженец: загрузка остатков, скрытие позиций, корректировки по итогам ревизии.
+  const canManageStock = () => !!currentUser && (currentUser.roleKey === "admin" || currentUser.roleKey === "procurement");
   // Руководитель: видит всё (все заявки, без реализации, посадки, аналитику), а действует как менеджер.
   const isDirector = () => !!currentUser && currentUser.roleKey === "director";
   const seesAll = () => isWarehouse() || isDirector();
@@ -2161,7 +2163,7 @@
             return `<div class="modem-set">📶 Модем к счётчику: <b>${m ? esc(ms ? ms.code || m : m) + (ms ? " · " + esc(ms.name) : "") : "не указан"}</b>${isAdmin()
               ? ` <select data-modemfor="${esc(r.key)}"><option value="">— без модема —</option>${modemsList().map(x => `<option value="${esc(x.key)}"${normCode(x.key) === m ? " selected" : ""}>${esc(x.code || x.name)} · ${esc(x.name)}</option>`).join("")}</select>
                  <button class="adj-btn" data-modemsave="${esc(r.key)}">Сохранить</button>` : ""}</div>`; })() : ""}
-          ${isAdmin() ? `<button class="adj-btn hide-btn" data-hidekey="${esc(r.key)}" data-hidecode="${esc(r.code)}" data-hidename="${esc(r.name)}" data-hideto="${isHiddenRow(r) ? "0" : "1"}">${isHiddenRow(r) ? "👁 Вернуть в дашборд" : "🙈 Скрыть из дашборда (не на продажу)"}</button>` : ""}
+          ${canManageStock() ? `<button class="adj-btn hide-btn" data-hidekey="${esc(r.key)}" data-hidecode="${esc(r.code)}" data-hidename="${esc(r.name)}" data-hideto="${isHiddenRow(r) ? "0" : "1"}">${isHiddenRow(r) ? "👁 Вернуть в дашборд" : "🙈 Скрыть из дашборда (не на продажу)"}</button>` : ""}
         </td>
       </tr>`;
     });
@@ -2197,7 +2199,7 @@
   }
   function renderHiddenPanel(){
     const panel = document.getElementById("hiddenPanel");
-    panel.hidden = !(isAdmin() && stockFilter === "hidden");
+    panel.hidden = !(canManageStock() && stockFilter === "hidden");
     if(panel.hidden) return;
     const sel = document.getElementById("hideSectionSel"), cur = sel.value;
     sel.innerHTML = `<option value="">— раздел —</option>` + stockSections().map(sct => {
@@ -2829,7 +2831,7 @@
     document.getElementById("revCount").textContent = rev ? "идёт" : "—";
     document.getElementById("revToolbar").hidden = !last;
     if(!last){
-      head.innerHTML = `<span>Ревизий пока не было. Каждый четверг в ${"9:00"} дашборд открывает её сам и пишет в Telegram.</span>${staff ? `<button class="new-order-btn" id="revStartBtn">📋 Начать ревизию сейчас</button>` : ""}`;
+      head.innerHTML = `<span>Ревизий пока не было. Ревизию запускает снабженец или админ, когда это нужно.</span>${staff ? `<button class="new-order-btn" id="revStartBtn">📋 Начать ревизию сейчас</button>` : ""}`;
       host.innerHTML = "";
       wireRevHead(); return;
     }
@@ -2868,7 +2870,7 @@
         : (c ? fmtNum(c.fact) : "—");
       let reason = "";
       if(!rev && c && c.diff){
-        const acts = !isAdmin() ? "" : adjDone(k) ? `<span class="adj-status">корректировка внесена ✓</span>`
+        const acts = !canManageStock() ? "" : adjDone(k) ? `<span class="adj-status">корректировка внесена ✓</span>`
           : pairs[k] ? `<button class="adj-btn" data-revadj="regrade" data-code="${esc(r.key)}" data-code2="${esc(pairs[k].code)}" data-qty="${-c.diff}">⚖ Пересорт ${esc(r.code || r.name)} → ${esc(pairs[k].code)} × ${-c.diff}</button>
                        <button class="adj-btn" data-revadj="shortage" data-code="${esc(r.key)}" data-qty="${-c.diff}">⚖ Недостача × ${-c.diff}</button>`
           : `<button class="adj-btn" data-revadj="${c.diff < 0 ? "shortage" : "surplus"}" data-code="${esc(r.key)}" data-qty="${Math.abs(c.diff)}">⚖ ${c.diff < 0 ? "Недостача" : "Излишек"} × ${Math.abs(c.diff)}</button>`;
@@ -4960,7 +4962,7 @@
     document.querySelectorAll("[data-warehouse-only]").forEach(el => { el.hidden = !seesAll(); });
     document.querySelectorAll("[data-admin-only]").forEach(el => { el.hidden = !seesAnalytics(); });
     document.getElementById("newReceiptBtn").hidden = !wh;
-    document.getElementById("uploadStockBtn").hidden = !(isAdmin() || currentUser.roleKey === "procurement");
+    document.getElementById("uploadStockBtn").hidden = !canManageStock();
     let cachedData = null;
     if(!freshPayload){ try{ cachedData = JSON.parse(sessionStorage.getItem(PAYLOAD_KEY) || "null"); }catch(e){ cachedData = null; } }
     if(!freshPayload && !(cachedData && Array.isArray(cachedData.stock))) cachedData = readLast();   // новое открытие — последние данные с этого компьютера

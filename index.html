@@ -1739,6 +1739,9 @@
   // как на сервере: в кодах с латиницей похожие русские буквы = латинские («LР» из 1С = «LP»)
   const LOOKALIKE = {"А":"A","В":"B","С":"C","Е":"E","Н":"H","К":"K","М":"M","О":"O","Р":"P","Т":"T","Х":"X","У":"Y"};
   function normCode(v){ const s = String(v ?? "").trim().toUpperCase(); return /[A-Z]/.test(s) ? s.replace(/[АВСЕНКМОРТХУ]/g, ch => LOOKALIKE[ch]) : s; }
+  // поиск: «LP» находит и «LР» с русской Р (и наоборот) — похожие буквы сравниваем как одну
+  const SFOLD = {"а":"a","в":"b","с":"c","е":"e","н":"h","к":"k","м":"m","о":"o","р":"p","т":"t","х":"x","у":"y"};
+  function sfold(v){ return String(v ?? "").toLowerCase().replace(/[авсенкмортху]/g, ch => SFOLD[ch]); }
 
   // "дд.мм.гггг" (или "гггг-мм-дд") → "гггг-мм-дд"; "" если не дата
   function dateKey(s){
@@ -2100,7 +2103,7 @@
     if(stockFilter === "all" && !(document.getElementById("stockSearch").value || "").trim()) rows = rows.filter(r => av(r) > 0);
 
     const term = (document.getElementById("stockSearch").value||"").trim().toLowerCase();
-    if(term) rows = rows.filter(r => r.code.toLowerCase().includes(term) || r.name.toLowerCase().includes(term));
+    if(term) rows = rows.filter(r => sfold(r.code).includes(sfold(term)) || sfold(r.name).includes(sfold(term)));
 
     let grouped = false;
     if(stockSort.key){
@@ -2258,25 +2261,45 @@
     return stockRows.filter(r => !r.isSection && r.key && !isHiddenRow(r))
       .sort((a, b) => (gi(a) - gi(b)) || (pk(b) - pk(a)) || (availOf(b.key) - availOf(a.key)) || a.name.localeCompare(b.name, "ru"));
   }
+  // Подсказки кода: не весь список, а до 5 штук — пустое поле → самые частые, с вводом → самые подходящие
+  const DL_MAX = 5;
+  const dlAll = {};   // id datalist → [{v, label, text, pop}]
+  const dlOpt = (v, label, pop) => ({v: String(v), label, pop: pop || 0, text: sfold(v + " " + label)});
+  function renderDl(id, q){
+    const all = dlAll[id] || [], f = sfold(String(q || "").trim());
+    let list;
+    if(!f) list = all.slice().sort((a, b) => b.pop - a.pop);
+    else {
+      const rank = o => { const v = sfold(o.v); return v === f ? 0 : v.startsWith(f) ? 1 : v.includes(f) ? 2 : 3; };
+      list = all.filter(o => o.text.includes(f)).sort((a, b) => (rank(a) - rank(b)) || (b.pop - a.pop));
+    }
+    const el = document.getElementById(id);
+    if(el) el.innerHTML = list.slice(0, DL_MAX).map(o => `<option value="${esc(o.v)}">${o.label}</option>`).join("");
+  }
+  ["input", "focusin"].forEach(ev => document.addEventListener(ev, e => {
+    const id = e.target && e.target.getAttribute && e.target.getAttribute("list");
+    if(id && dlAll[id]) renderDl(id, e.target.value);
+  }, true));
   function fillCodeDatalist(){
-    const dl = document.getElementById("stockCodes");
+    const pop = popularity(), pk = key => pop[normCode(key)] || 0;
     const ordered = suggestRows();
-    dl.innerHTML = ordered
-      .map(r => `<option value="${esc(r.key)}">${r.code ? esc(r.name) + " · " : "без артикула · "}доступно ${fmtNum(availOf(r.key))}</option>`).join("");
+    const stockOpts = ordered.map(r => dlOpt(r.key, `${r.code ? esc(r.name) + " · " : "без артикула · "}доступно ${fmtNum(availOf(r.key))}`, pk(r.key)));
+    dlAll.stockCodes = stockOpts;
     // + позиции из справочника 1С, которых нет в остатках (скрытые сюда не попадают: они есть в остатках)
     const inStockKeys = new Set(stockRows.filter(r => !r.isSection && r.key).map(r => latinCode(r.key)));
-    document.getElementById("receiptCodes").innerHTML = dl.innerHTML +
-      Object.values(catalogByCode).filter(c => !inStockKeys.has(latinCode(c.code)))
-        .map(c => `<option value="${esc(c.code)}">из 1С · ${esc(c.name)}</option>`).join("") +
-      Object.values(catalogByName).filter(c => !inStockKeys.has(latinCode(c.name)))
-        .map(c => `<option value="${esc(c.name)}">из 1С · без артикула</option>`).join("");
-    document.getElementById("requestCodes").innerHTML = ordered
-      .map(r => { const k = kitIndex[normCode(r.key)];
+    dlAll.receiptCodes = stockOpts.concat(
+      Object.values(catalogByCode).filter(c => !inStockKeys.has(latinCode(c.code))).map(c => dlOpt(c.code, `из 1С · ${esc(c.name)}`, pk(c.code))),
+      Object.values(catalogByName).filter(c => !inStockKeys.has(latinCode(c.name))).map(c => dlOpt(c.name, "из 1С · без артикула", 0)));
+    dlAll.requestCodes = ordered.map(r => { const k = kitIndex[normCode(r.key)];
         // комплект, который бывает и готовым в остатках, — так же явно, как остальные комплекты
-        if(k) return `<option value="${esc(r.key)}">🧩 комплект ${esc(kitPartsText(k))} · готовых ${fmtNum(Math.max(0, availOf(r.key)))} + можно собрать ${fmtNum(kitBuildable(k))}</option>`;
-        return `<option value="${esc(r.key)}">${r.code ? esc(r.name) + " · " : "без артикула · "}доступно ${fmtNum(availOf(r.key))}</option>`; }).join("") + Object.values(kitIndex)
-      .filter(k => !stockIndex[normCode(k.code)] && !k.auto)
-      .map(k => `<option value="${esc(k.code)}">🧩 комплект ${esc(kitPartsText(k))} · можно собрать ${fmtNum(kitBuildable(k))}</option>`).join("");
+        if(k) return dlOpt(r.key, `🧩 комплект ${esc(kitPartsText(k))} · готовых ${fmtNum(Math.max(0, availOf(r.key)))} + можно собрать ${fmtNum(kitBuildable(k))}`, pk(r.key));
+        return dlOpt(r.key, `${r.code ? esc(r.name) + " · " : "без артикула · "}доступно ${fmtNum(availOf(r.key))}`, pk(r.key)); })
+      .concat(Object.values(kitIndex).filter(k => !stockIndex[normCode(k.code)] && !k.auto)
+        .map(k => dlOpt(k.code, `🧩 комплект ${esc(kitPartsText(k))} · можно собрать ${fmtNum(kitBuildable(k))}`, pk(k.code))));
+    ["stockCodes", "receiptCodes", "requestCodes"].forEach(id => {
+      const a = document.activeElement;
+      renderDl(id, a && a.getAttribute && a.getAttribute("list") === id ? a.value : "");
+    });
   }
 
   // ---------- Render: REQUESTS ----------
@@ -2325,9 +2348,9 @@
     const term = (document.getElementById("requestsSearch").value||"").trim().toLowerCase();
     if(term) rows = rows.filter(r =>
       String(r.id) === term.replace("№","") ||
-      r.manager.toLowerCase().includes(term) ||
-      r.comment.toLowerCase().includes(term) ||
-      (r.lines || r.items).concat(r.items).some(it => it.code.toLowerCase().includes(term))
+      sfold(r.manager).includes(sfold(term)) ||
+      sfold(r.comment).includes(sfold(term)) ||
+      (r.lines || r.items).concat(r.items).some(it => sfold(it.code).includes(sfold(term)))
     );
 
     rows.sort((a,b)=>{
@@ -2483,34 +2506,46 @@
     return data;
   }
 
+  // ---------- Мгновенный отклик: изменение видно сразу, сохранение идёт в фоне ----------
+  // Пока сервер сохраняет, данные с сервера (в т.ч. из фонового обновления) показываем с этой правкой поверх.
+  const pendingOps = new Map();   // № заявки → {del: true} | {status, shipDate, changedBy}
+  function withPending(rows){
+    if(!pendingOps.size) return rows;
+    return rows.filter(r => !(pendingOps.get(r.id) || {}).del).map(r => {
+      const p = pendingOps.get(r.id);
+      return p && p.status ? Object.assign({}, r, {status: p.status, shipDate: p.shipDate != null ? p.shipDate : r.shipDate, changedBy: p.changedBy || r.changedBy}) : r;
+    });
+  }
+  async function runOptimistic(id, op, call, failMsg){
+    const before = requestRows;
+    pendingOps.set(id, op);
+    requestRows = withPending(requestRows); requests = groupRequests(requestRows); renderAll();
+    setSyncState("loading", "Сохраняю…");
+    try{
+      await call();
+      setTimeout(() => { if(pendingOps.get(id) === op) pendingOps.delete(id); }, 20000);   // сервер уже сохранил — правка больше не нужна поверх
+      await syncAll(true);
+    }catch(err){
+      if(pendingOps.get(id) === op) pendingOps.delete(id);
+      requestRows = before; requests = groupRequests(requestRows); renderAll();   // откат на экране
+      setSyncState("error", "Не сохранилось");
+      alert(failMsg + err.message);
+      syncAll(true);
+    }
+  }
+
   async function changeRequestStatus(req, status, btn){
     const label = linesText(req);
     if(status === ST_CANCELLED && !confirm(`Отменить заявку №${req.id}?\n${label}`)) return;
-    const cell = btn.parentElement;
-    const original = cell.innerHTML;
-    cell.innerHTML = `<span class="badge other">Сохраняю…</span>`;
-    try{
-      await api("setRequestStatus", {id: req.id, status});
-      await syncAll(true);
-    }catch(err){
-      cell.innerHTML = original;
-      cell.querySelector(".badge-btn")?.addEventListener("click", (e)=>{ e.stopPropagation(); openStatusMenu(cell.querySelector(".badge-btn"), req); });
-      alert("Не удалось изменить статус: " + err.message);
-    }
+    const op = {status, changedBy: currentUser ? currentUser.name : ""};
+    if(status === ST_SHIPPED && !req.shipDate) op.shipDate = new Date().toLocaleDateString("ru-RU");
+    await runOptimistic(req.id, op, () => api("setRequestStatus", {id: req.id, status}), "Не удалось изменить статус: ");
   }
 
   async function removeRequest(req, btn){
     const label = linesText(req);
     if(!confirm(`Удалить заявку №${req.id} насовсем?\n${label}\n\nЕсли заявку просто не нужно выполнять — лучше поставь «${ST_CANCELLED}».`)) return;
-    const row = btn.closest("tr");
-    row.style.opacity = "0.4";
-    try{
-      await api("deleteRequest", {id: req.id});
-      await syncAll(true);
-    }catch(err){
-      row.style.opacity = "";
-      alert("Не удалось удалить заявку: " + err.message);
-    }
+    await runOptimistic(req.id, {del: true}, () => api("deleteRequest", {id: req.id}), "Не удалось удалить заявку: ");
   }
 
   // ---------- Item detail modal ----------
@@ -2660,8 +2695,8 @@
     let rows = source.slice().sort((a,b)=> a.id - b.id);
     const term = (document.getElementById("unrealizedSearch").value||"").trim().toLowerCase();
     if(term) rows = rows.filter(r =>
-      String(r.id) === term.replace("№","") || r.manager.toLowerCase().includes(term) ||
-      r.comment.toLowerCase().includes(term) || r.items.some(it => it.code.toLowerCase().includes(term)));
+      String(r.id) === term.replace("№","") || sfold(r.manager).includes(sfold(term)) ||
+      sfold(r.comment).includes(sfold(term)) || r.items.some(it => sfold(it.code).includes(sfold(term))));
 
     document.getElementById("unrealizedRowCount").textContent = `${rows.length} из ${source.length}`;
     const host = document.getElementById("unrealizedTableHost");
@@ -2784,7 +2819,7 @@
   function renderReceipts(){
     let rows = receiptRows.slice().sort((a,b)=> b.sheetRow - a.sheetRow);
     const term = (document.getElementById("receiptsSearch").value||"").trim().toLowerCase();
-    if(term) rows = rows.filter(r => r.code.toLowerCase().includes(term) || r.comment.toLowerCase().includes(term) || r.who.toLowerCase().includes(term));
+    if(term) rows = rows.filter(r => sfold(r.code).includes(sfold(term)) || sfold(r.comment).includes(sfold(term)) || sfold(r.who).includes(sfold(term)));
 
     document.getElementById("receiptsRowCount").textContent = `${rows.length} из ${receiptRows.length}`;
     const host = document.getElementById("receiptsTableHost");
@@ -2870,7 +2905,7 @@
     let list = rev ? rows : rows.filter(r => byKey[normCode(r.key)]);
     if(revFilter === "todo") list = list.filter(r => !byKey[normCode(r.key)]);
     if(revFilter === "diff") list = list.filter(r => byKey[normCode(r.key)] && byKey[normCode(r.key)].diff);
-    if(term) list = list.filter(r => r.code.toLowerCase().includes(term) || r.name.toLowerCase().includes(term));
+    if(term) list = list.filter(r => sfold(r.code).includes(sfold(term)) || sfold(r.name).includes(sfold(term)));
     if(!rev) list = list.slice().sort((a, b) => Math.abs(byKey[normCode(b.key)].diff) - Math.abs(byKey[normCode(a.key)].diff));
     document.getElementById("revRowCount").textContent = `${list.length} из ${rev ? rows.length : counts.length}`;
     if(!list.length){ host.innerHTML = `<div class="state-box"><div class="big">${revFilter === "todo" ? "Всё посчитано 👍" : revFilter === "diff" ? "Расхождений нет ✓" : "Ничего не найдено"}</div></div>`; return; }
@@ -2980,7 +3015,7 @@
     document.getElementById("newAdjBtn").hidden = !isWarehouse();
     const term = (document.getElementById("adjSearch").value || "").trim().toLowerCase();
     let list = adjFilter === "open" ? open : groups;
-    if(term) list = list.filter(g => g.parts.some(p => p.code.toLowerCase().includes(term)) || g.comment.toLowerCase().includes(term) || g.by.toLowerCase().includes(term));
+    if(term) list = list.filter(g => g.parts.some(p => sfold(p.code).includes(sfold(term))) || sfold(g.comment).includes(sfold(term)) || sfold(g.by).includes(sfold(term)));
     document.getElementById("adjRowCount").textContent = `${list.length} из ${adjFilter === "open" ? open.length : groups.length}`;
     const host = document.getElementById("adjTableHost");
     if(!list.length){
@@ -3047,7 +3082,7 @@
   function renderPricelist(){
     let rows = pricelistRows.slice();
     const term = (document.getElementById("pricelistSearch").value||"").trim().toLowerCase();
-    if(term) rows = rows.filter(r => r.code.toLowerCase().includes(term) || r.name.toLowerCase().includes(term));
+    if(term) rows = rows.filter(r => sfold(r.code).includes(sfold(term)) || sfold(r.name).includes(sfold(term)));
     if(pricelistSort.key){
       rows.sort((a,b)=>{
         const x = (a[pricelistSort.key]||"").toLowerCase(), y = (b[pricelistSort.key]||"").toLowerCase();
@@ -3598,8 +3633,8 @@
         if(!name && !code) return;
         const fixed = fixCode(code);
         if(fixed !== code) fixedCodes.push([code, fixed]);
-        // «Доступно» = В наличии − Отгружается − В резерве: уже учитывает проведённые, но не вывезенные реализации
-        const qty = "avail" in val ? val.avail : ("have" in val ? val.have : 0);
+        // «Отгружается» не вычитаем (что уходит со склада, дашборд знает по своим заявкам): остаток = В наличии − В резерве
+        const qty = "have" in val ? val.have - (val.res || 0) : ("avail" in val ? val.avail + (val.ship || 0) : 0);
         items.push({code: fixed, name, unit, qty, available: "avail" in val ? val.avail : qty});
       });
     });
@@ -3945,7 +3980,7 @@
       snapshot = {disp: st.snapDisp, key: snapAtF(st.snapDisp)};
       pricelistRows = buildPricelist(data.pricelist);
       opsError = "";
-      requestRows = buildRequestRows(data.requests);
+      requestRows = withPending(buildRequestRows(data.requests));
       requests = groupRequests(requestRows);
       pendingEvents = detectRequestEvents(requests);
       receiptRows = buildReceipts(data.receipts);
